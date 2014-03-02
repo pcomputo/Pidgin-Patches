@@ -1,0 +1,309 @@
+diff --git a/pidgin/gtkconv.c b/pidgin/gtkconv.c
+--- a/pidgin/gtkconv.c
++++ b/pidgin/gtkconv.c
+@@ -174,6 +174,7 @@
+ 
+ static GtkWidget *invite_dialog = NULL;
+ static GtkWidget *warn_close_dialog = NULL;
++static GtkWidget *warn_unsent_close_dialog = NULL;
+ 
+ static PidginWindow *hidden_convwin = NULL;
+ static GList *window_list = NULL;
+@@ -213,6 +214,9 @@
+ static void pidgin_conv_tab_pack(PidginWindow *win, PidginConversation *gtkconv);
+ static gboolean infopane_press_cb(GtkWidget *widget, GdkEventButton *e, PidginConversation *conv);
+ static void hide_conv(PidginConversation *gtkconv, gboolean closetimer);
++static void build_warn_unsent_close_dialog(PidginWindow *gtkwin, PidginConversation *gtkconv, int flag, GList *list, int set_common_msg);
++static void display_warn_unsent_close_dialog(PidginWindow *gtkwin, PidginConversation *gtkconv);
++static gboolean check_unsent_text(PidginConversation *gtkconv, PidginWindow *win, gboolean use_window);
+ 
+ static void pidgin_conv_set_position_size(PidginWindow *win, int x, int y,
+ 		int width, int height);
+@@ -1396,12 +1400,46 @@
+ 	}
+ }
+ 
++static gboolean
++check_unsent_text_cb(GtkButton *button, PidginConversation *gtkconv)
++{
++	check_unsent_text(gtkconv, gtkconv->win, FALSE);
++
++	return TRUE;
++}
++
++static gboolean
++check_unsent_text(PidginConversation *gtkconv, PidginWindow *win, gboolean use_window)
++{
++	gchar *unsent_text;
++
++	unsent_text = pidgin_webview_get_body_text(PIDGIN_WEBVIEW(gtkconv->entry));
++
++	if (*unsent_text && strcmp(unsent_text, "\n"))
++		display_warn_unsent_close_dialog(win, gtkconv);
++	else {
++		/*set to TRUE for menu_close_conv_cb*/
++		if (use_window)
++			close_conv_cb(NULL, PIDGIN_CONVERSATION(pidgin_conv_window_get_active_conversation(win)));
++		else
++			close_conv_cb(NULL, gtkconv);
++	}
++
++	return TRUE;
++}
++
+ static void
+ menu_close_conv_cb(GtkAction *action, gpointer data)
+ {
+ 	PidginWindow *win = data;
+ 
+-	close_conv_cb(NULL, PIDGIN_CONVERSATION(pidgin_conv_window_get_active_conversation(win)));
++	PurpleConversation *conv;
++	PidginConversation *gtkconv;
++
++	conv = pidgin_conv_window_get_active_conversation(win);
++	gtkconv = PIDGIN_CONVERSATION(conv);
++
++	check_unsent_text(gtkconv, win, TRUE);
+ }
+ 
+ static void
+@@ -9153,11 +9191,42 @@
+ 	gtk_widget_destroy(warn_close_dialog);
+ 	warn_close_dialog = NULL;
+ 
++	gtk_widget_destroy(warn_unsent_close_dialog);
++	warn_unsent_close_dialog = NULL;
++
+ 	if (resp == GTK_RESPONSE_OK)
+ 		pidgin_conv_window_destroy(win);
+ }
+ 
+ static void
++do_close_unsent_cb(GtkWidget *w, int resp, PidginConversation *gtkconv)
++{
++	gtk_widget_destroy(warn_unsent_close_dialog);
++	warn_unsent_close_dialog = NULL;
++
++	if (resp == GTK_RESPONSE_OK) {
++		close_conv_cb(NULL, gtkconv);
++	}
++}
++
++static void
++do_close_unsent_others_cb(GtkWidget *w, int resp, GList *list)
++{
++	gtk_widget_destroy(warn_unsent_close_dialog);
++	warn_unsent_close_dialog = NULL;
++
++	if (resp == GTK_RESPONSE_OK) {
++		GList *iter;
++
++		for (iter = list; iter;) {
++			PidginConversation *gconv = iter->data;
++			iter = iter->next;
++			close_conv_cb(NULL, gconv);
++		}
++	}
++}
++
++static void
+ build_warn_close_dialog(PidginWindow *gtkwin)
+ {
+ 	GtkWidget *label, *vbox, *hbox, *img;
+@@ -9206,6 +9275,74 @@
+ 
+ }
+ 
++static void
++build_warn_unsent_close_dialog(PidginWindow *gtkwin, PidginConversation *gtkconv, int flag, GList *list, int set_common_msg)
++{
++	GtkWidget *label, *vbox, *hbox, *img;
++
++	g_return_if_fail(warn_unsent_close_dialog == NULL);
++
++	warn_unsent_close_dialog = gtk_dialog_new_with_buttons(_("Confirm close"),
++							GTK_WINDOW(gtkwin->window), GTK_DIALOG_MODAL,
++							GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
++							GTK_STOCK_CLOSE, GTK_RESPONSE_OK, NULL);
++
++	gtk_dialog_set_default_response(GTK_DIALOG(warn_unsent_close_dialog),
++	                                GTK_RESPONSE_OK);
++
++	gtk_container_set_border_width(GTK_CONTAINER(warn_unsent_close_dialog),
++	                               6);
++	gtk_window_set_resizable(GTK_WINDOW(warn_unsent_close_dialog), FALSE);
++
++	/* Setup the outside spacing. */
++	vbox = gtk_dialog_get_content_area(GTK_DIALOG(warn_unsent_close_dialog));
++
++	gtk_box_set_spacing(GTK_BOX(vbox), 12);
++	gtk_container_set_border_width(GTK_CONTAINER(vbox), 6);
++
++	img = gtk_image_new_from_stock(PIDGIN_STOCK_DIALOG_WARNING,
++	                               gtk_icon_size_from_name(PIDGIN_ICON_SIZE_TANGO_HUGE));
++	/* Setup the inner hbox and put the dialog's icon in it. */
++	hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
++	gtk_container_add(GTK_CONTAINER(vbox), hbox);
++	gtk_box_pack_start(GTK_BOX(hbox), img, FALSE, FALSE, 0);
++	gtk_misc_set_alignment(GTK_MISC(img), 0, 0);
++
++	/* Setup the right vbox. */
++	vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
++	gtk_container_add(GTK_CONTAINER(hbox), vbox);
++
++	if(set_common_msg == 1)
++		label = gtk_label_new(_("You have unread and unsent messages. Are you sure you want to close the window?"));
++	else
++	   label = gtk_label_new(_("You have unsent messages. Are you sure you want to close the window?"));
++
++	gtk_widget_set_size_request(label, 350, -1);
++	gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
++	gtk_misc_set_alignment(GTK_MISC(label), 0, 0);
++	gtk_box_pack_start(GTK_BOX(vbox), label, FALSE, FALSE, 0);
++
++	/* Connect the signals. */
++	if (flag == 0) {
++		g_signal_connect(G_OBJECT(warn_unsent_close_dialog), "response",
++	   	              G_CALLBACK(do_close_unsent_cb), gtkconv);
++	} else if (flag == 1) {
++		g_signal_connect(G_OBJECT(warn_unsent_close_dialog), "response",
++	   	              G_CALLBACK(do_close), gtkwin);
++	} else if (flag == 2) {
++		g_signal_connect(G_OBJECT(warn_unsent_close_dialog), "response",
++	   	              G_CALLBACK(do_close_unsent_others_cb), list);
++	}
++}
++
++static void
++display_warn_unsent_close_dialog(PidginWindow *gtkwin, PidginConversation *gtkconv)
++{
++	build_warn_unsent_close_dialog(gtkwin, gtkconv, 0, NULL, 0);
++	gtk_widget_show_all(warn_unsent_close_dialog);
++
++}
++
+ /**************************************************************************
+  * Callbacks
+  **************************************************************************/
+@@ -9215,7 +9352,8 @@
+ {
+ 	PidginWindow *win = d;
+ 	GList *l;
+-
++	gchar *unsent_text;
++	int unsent_set = 0, unread_set = 0;
+ 	/* If there are unread messages then show a warning dialog */
+ 	for (l = pidgin_conv_window_get_gtkconvs(win);
+ 	     l != NULL; l = l->next)
+@@ -9224,12 +9362,39 @@
+ 		if (PURPLE_IS_IM_CONVERSATION(gtkconv->active_conv) &&
+ 				gtkconv->unseen_state >= PIDGIN_UNSEEN_TEXT)
+ 		{
+-			build_warn_close_dialog(win);
+-			gtk_widget_show_all(warn_close_dialog);
+-
+-			return TRUE;
+-		}
+-	}
++			unread_set = 1;
++		}
++	}
++
++	/* If there are unsent messages then show a warning dialog
++		second priority over unread messages */
++	for (l = pidgin_conv_window_get_gtkconvs(win);
++	     l != NULL; l = l->next)
++	{
++		PidginConversation *gtkconv = l->data;
++		unsent_text = pidgin_webview_get_body_text(PIDGIN_WEBVIEW(gtkconv->entry));
++
++		if(*unsent_text && strcmp(unsent_text, "\n")) {
++			unsent_set = 1;
++		}
++	}
++
++	if (unread_set == 1 && unsent_set == 1) {
++		build_warn_unsent_close_dialog(win, NULL, 1, NULL, 1);
++		gtk_widget_show_all(warn_unsent_close_dialog);
++
++		return TRUE;
++	} else if (unread_set == 1 && unsent_set == 0) {
++		build_warn_close_dialog(win);
++		gtk_widget_show_all(warn_close_dialog);
++
++		return TRUE;
++   } else if (unread_set == 0 && unsent_set == 1) {
++		build_warn_unsent_close_dialog(win, NULL, 1, NULL, 0);
++		gtk_widget_show_all(warn_unsent_close_dialog);
++
++		return TRUE;
++   }
+ 
+ 	pidgin_conv_window_destroy(win);
+ 
+@@ -9530,7 +9695,7 @@
+ 			return FALSE;
+ 
+ 		gtkconv = pidgin_conv_window_get_gtkconv_at_index(win, tab_clicked);
+-		close_conv_cb(NULL, gtkconv);
++		check_unsent_text(gtkconv, gtkconv->win, FALSE);
+ 		return TRUE;
+ 	}
+ 
+@@ -9792,7 +9957,9 @@
+ {
+ 	GList *iter;
+ 	PidginConversation *gtkconv;
+-
++	gchar *unsent_text;
++	GList *list = NULL;
++	int count = 0;
+ 	gtkconv = win->clicked_tab;
+ 
+ 	if (!gtkconv)
+@@ -9805,9 +9972,21 @@
+ 
+ 		if (gconv != gtkconv)
+ 		{
+-			close_conv_cb(NULL, gconv);
+-		}
+-	}
++			unsent_text = pidgin_webview_get_body_text(PIDGIN_WEBVIEW(gconv->entry));
++			if (*unsent_text && strcmp(unsent_text, "\n")) {
++				list = g_list_append(list, gconv);
++				count++;
++			}else {
++				close_conv_cb(NULL, gconv);
++			}
++		}
++	}
++
++	if (list) {
++		build_warn_unsent_close_dialog(win, NULL, 2, list, 0);
++		gtk_widget_show_all(warn_unsent_close_dialog);
++	}
++
+ }
+ 
+ static void
+@@ -9817,8 +9996,9 @@
+ 
+ 	gtkconv = win->clicked_tab;
+ 
+-	if (gtkconv)
+-		close_conv_cb(NULL, gtkconv);
++	if (gtkconv) {
++		check_unsent_text(gtkconv,  gtkconv->win, FALSE);
++	}
+ }
+ 
+ static void
+@@ -10498,7 +10678,7 @@
+ 	gtkconv->close = pidgin_create_small_button(gtk_label_new("×"));
+ 	gtk_widget_set_tooltip_text(gtkconv->close, _("Close conversation"));
+ 
+-	g_signal_connect(gtkconv->close, "clicked", G_CALLBACK (close_conv_cb), gtkconv);
++	g_signal_connect(gtkconv->close, "clicked", G_CALLBACK (check_unsent_text_cb), gtkconv);
+ 
+ 	/* Status icon. */
+ 	gtkconv->icon = gtk_image_new();
