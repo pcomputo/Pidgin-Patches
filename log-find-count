@@ -1,0 +1,57 @@
+diff --git a/pidgin/gtklog.c b/pidgin/gtklog.c
+--- a/pidgin/gtklog.c
++++ b/pidgin/gtklog.c
+@@ -420,10 +420,24 @@
+ 
+ static gboolean search_find_cb(gpointer data)
+ {
++	char *textC;
++	guint count;
+ 	PidginLogViewer *viewer = data;
+-	webkit_web_view_mark_text_matches(WEBKIT_WEB_VIEW(viewer->web_view), viewer->search, FALSE, 0);
++
++	count = webkit_web_view_mark_text_matches(WEBKIT_WEB_VIEW(viewer->web_view), viewer->search, FALSE, 0);
+ 	webkit_web_view_set_highlight_text_matches(WEBKIT_WEB_VIEW(viewer->web_view), TRUE);
+ 	webkit_web_view_search_text(WEBKIT_WEB_VIEW(viewer->web_view), viewer->search, FALSE, TRUE, TRUE);
++
++	if (count){
++		textC = g_strdup_printf("<span weight='bold'>%s</span> %d", _("Matches found:"), count);
++		gtk_label_set_markup(GTK_LABEL(viewer->label), textC);
++	}
++	else{
++		textC = g_strdup_printf("<span weight='bold'>%s</span>", _("No matches found!"));
++		gtk_label_set_markup(GTK_LABEL(viewer->label), textC);
++	}
++
++	g_free(textC);
+ 	return FALSE;
+ }
+ 
+@@ -448,17 +462,19 @@
+ 
+ 	pidgin_set_cursor(viewer->window, GDK_WATCH);
+ 
+-	if (log->type != PURPLE_LOG_SYSTEM) {
+-		char *title;
+-		if (log->type == PURPLE_LOG_CHAT)
+-			title = g_strdup_printf(_("<span size='larger' weight='bold'>Conversation in %s on %s</span>"),
++	if (viewer->search == NULL) {
++		if (log->type != PURPLE_LOG_SYSTEM) {
++			char *title;
++			if (log->type == PURPLE_LOG_CHAT)
++				title = g_strdup_printf(_("<span size='larger' weight='bold'>Conversation in %s on %s</span>"),
+ 									log->name, log_get_date(log));
+-		else
+-			title = g_strdup_printf(_("<span size='larger' weight='bold'>Conversation with %s on %s</span>"),
++			else
++				title = g_strdup_printf(_("<span size='larger' weight='bold'>Conversation with %s on %s</span>"),
+ 									log->name, log_get_date(log));
+ 
+-		gtk_label_set_markup(GTK_LABEL(viewer->label), title);
+-		g_free(title);
++			gtk_label_set_markup(GTK_LABEL(viewer->label), title);
++			g_free(title);
++		}
+ 	}
+ 
+ 	read = purple_log_read(log, &flags);
